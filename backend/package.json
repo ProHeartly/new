@@ -1,0 +1,17 @@
+{
+  "name": "3d-mouse-backend",
+  "version": "1.0.0",
+  "description": "WebSocket server for 3D mobile mouse",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

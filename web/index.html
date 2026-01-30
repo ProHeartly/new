@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Mobile Mouse - Web Interface</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        
+        .container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .cursor {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background: radial-gradient(circle, #ff4757, #ff3838);
+            border-radius: 50%;
+            box-shadow: 0 0 15px rgba(255, 71, 87, 0.8), 0 0 30px rgba(255, 71, 87, 0.4);
+            z-index: 10;
+            border: 2px solid rgba(255, 255, 255, 0.9);
+            pointer-events: none;
+        }
+        
+        .cursor::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 6px;
+            height: 6px;
+            background: white;
+            border-radius: 50%;
+            box-shadow: 0 0 5px rgba(255, 255, 255, 0.8);
+        }
+        
+        .info-panel {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 14px;
+            z-index: 100;
+            min-width: 250px;
+        }
+        
+        .status {
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+        
+        .connected { color: #4CAF50; }
+        .disconnected { color: #f44336; }
+        
+        .data-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+        }
+        
+        .trail {
+            position: absolute;
+            width: 3px;
+            height: 3px;
+            background: rgba(255, 71, 87, 0.6);
+            border-radius: 50%;
+            pointer-events: none;
+            animation: fadeOut 1.5s ease-out forwards;
+        }
+        
+        @keyframes fadeOut {
+            0% { opacity: 1; transform: scale(1); }
+            100% { opacity: 0; transform: scale(0.5); }
+        }
+        
+        .connection-form {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            z-index: 100;
+        }
+        
+        .connection-form input {
+            width: 200px;
+            padding: 5px;
+            margin: 5px 0;
+            border: none;
+            border-radius: 3px;
+        }
+        
+        .connection-form button {
+            padding: 8px 15px;
+            margin: 5px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .connection-form button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="cursor" id="cursor"></div>
+    </div>
+    
+    <div class="info-panel">
+        <div class="status" id="status">Status: <span class="disconnected">Disconnected</span></div>
+        <div class="data-row">
+            <span>X:</span>
+            <span id="x-value">0.000</span>
+        </div>
+        <div class="data-row">
+            <span>Y:</span>
+            <span id="y-value">0.000</span>
+        </div>
+        <div class="data-row">
+            <span>Z:</span>
+            <span id="z-value">0.000</span>
+        </div>
+        <div class="data-row">
+            <span>Position:</span>
+            <span id="position">0, 0</span>
+        </div>
+    </div>
+    
+    <div class="connection-form">
+        <div>Server URL:</div>
+        <input type="text" id="serverUrl" value="ws://192.168.1.74:8080" placeholder="ws://192.168.1.74:8080">
+        <br>
+        <button id="connectBtn" onclick="connect()">Connect</button>
+        <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+        <br>
+        <button onclick="resetCursor()" style="background: #ff9800; margin-top: 5px;">Reset Cursor</button>
+    </div>
+
+    <script>
+        let ws = null;
+        let isConnected = false;
+        
+        // Smooth cursor movement variables
+        let targetX = window.innerWidth / 2;
+        let targetY = window.innerHeight / 2;
+        let cursorX = targetX;
+        let cursorY = targetY;
+        let isAnimating = false;
+        
+        const cursor = document.getElementById('cursor');
+        const status = document.getElementById('status');
+        const xValue = document.getElementById('x-value');
+        const yValue = document.getElementById('y-value');
+        const zValue = document.getElementById('z-value');
+        const position = document.getElementById('position');
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const serverUrl = document.getElementById('serverUrl');
+        
+        // Initialize cursor position
+        updateCursorPosition();
+        
+        // Start smooth animation loop
+        startSmoothAnimation();
+        
+        function connect() {
+            const url = serverUrl.value;
+            try {
+                ws = new WebSocket(url);
+                
+                ws.onopen = function() {
+                    isConnected = true;
+                    updateStatus('Connected', true);
+                    connectBtn.disabled = true;
+                    disconnectBtn.disabled = false;
+                    console.log('Connected to server');
+                };
+                
+                ws.onmessage = function(event) {
+                    console.log('📨 RAW MESSAGE:', event.data); // Debug log
+                    try {
+                        const data = JSON.parse(event.data);
+                        console.log('📦 PARSED DATA:', data); // Debug log
+                        if (data.type === 'motion' || data.type === 'orientation') {
+                            handleMotionData(data);
+                        } else if (data.type === 'welcome') {
+                            console.log('👋 Welcome message:', data.message);
+                        } else {
+                            console.log('❓ Unknown message type:', data);
+                        }
+                    } catch (error) {
+                        console.error('💥 Error parsing message:', error);
+                        console.log('Raw data was:', event.data);
+                    }
+                };
+                
+                ws.onclose = function() {
+                    isConnected = false;
+                    updateStatus('Disconnected', false);
+                    connectBtn.disabled = false;
+                    disconnectBtn.disabled = true;
+                    console.log('Disconnected from server');
+                };
+                
+                ws.onerror = function(error) {
+                    console.error('WebSocket error:', error);
+                    updateStatus('Connection Error', false);
+                };
+                
+            } catch (error) {
+                console.error('Failed to connect:', error);
+                updateStatus('Connection Failed', false);
+            }
+        }
+        
+        function disconnect() {
+            if (ws) {
+                ws.close();
+            }
+        }
+        
+        function handleMotionData(data) {
+            console.log('🔥 HANDLE MOTION DATA CALLED WITH:', data);
+            
+            // Handle movement-based tracking (physical phone movement)
+            if (data.type === 'motion' && data.movementX !== undefined) {
+                console.log('✅ MOVEMENT DATA DETECTED!');
+                
+                // Movement-based cursor control
+                xValue.textContent = `MX:${data.movementX.toFixed(3)}`;
+                yValue.textContent = `MY:${data.movementY.toFixed(3)}`;
+                zValue.textContent = `RAW:${data.rawAccelX.toFixed(1)}`;
+                
+                // Convert movement to cursor displacement with balanced sensitivity
+                const sensitivity = 12; // Increased from 2 for better responsiveness
+                const deadzone = 0.08; // Keep the same deadzone to filter jitter
+                
+                let deltaX = 0;
+                let deltaY = 0;
+                
+                // Only apply movement if it's above the deadzone (filters out jitter)
+                if (Math.abs(data.movementX) > deadzone) {
+                    deltaX = data.movementX * sensitivity;
+                    console.log('🔥 X MOVEMENT APPLIED:', deltaX.toFixed(2));
+                } else {
+                    console.log('❌ X movement filtered (jitter):', data.movementX.toFixed(3));
+                }
+                
+                if (Math.abs(data.movementY) > deadzone) {
+                    deltaY = -data.movementY * sensitivity; // Inverted for natural feel
+                    console.log('🔥 Y MOVEMENT APPLIED:', deltaY.toFixed(2));
+                } else {
+                    console.log('❌ Y movement filtered (jitter):', data.movementY.toFixed(3));
+                }
+                
+                // Apply relative movement (not absolute positioning)
+                if (Math.abs(deltaX) > 0.1 || Math.abs(deltaY) > 0.1) {
+                    targetX += deltaX;
+                    targetY += deltaY;
+                    
+                    // Keep within bounds
+                    targetX = Math.max(0, Math.min(window.innerWidth - 30, targetX));
+                    targetY = Math.max(0, Math.min(window.innerHeight - 30, targetY));
+                    
+                    console.log('🔥 CURSOR MOVED BY:', `${deltaX.toFixed(1)}, ${deltaY.toFixed(1)}`);
+                }
+                
+                return; // Exit early since we handled movement data
+            }
+            
+            // Handle orientation data (fallback)
+            if (data.type === 'orientation' || (data.type === 'motion' && data.pitch !== undefined)) {
+                console.log('📐 ORIENTATION DATA DETECTED');
+                
+                // Check if pitch/roll/yaw exist and are numbers
+                const pitch = (typeof data.pitch === 'number' && !isNaN(data.pitch)) ? data.pitch : 0;
+                const roll = (typeof data.roll === 'number' && !isNaN(data.roll)) ? data.roll : 0;
+                const yaw = (typeof data.yaw === 'number' && !isNaN(data.yaw)) ? data.yaw : 0;
+                
+                // Orientation-based movement (like a laser pointer)
+                xValue.textContent = `P:${(pitch * 180 / Math.PI).toFixed(1)}°`;
+                yValue.textContent = `R:${(roll * 180 / Math.PI).toFixed(1)}°`;
+                zValue.textContent = `Y:${(yaw * 180 / Math.PI).toFixed(1)}°`;
+                
+                // Convert orientation to cursor movement
+                const sensitivity = 200;
+                const deadzone = 0.01;
+                
+                let deltaX = 0;
+                let deltaY = 0;
+                
+                if (Math.abs(roll) > deadzone) {
+                    deltaX = roll * sensitivity;
+                }
+                
+                if (Math.abs(pitch) > deadzone) {
+                    deltaY = pitch * sensitivity;
+                }
+                
+                targetX += deltaX;
+                targetY += deltaY;
+                
+                // Keep within bounds
+                targetX = Math.max(0, Math.min(window.innerWidth - 30, targetX));
+                targetY = Math.max(0, Math.min(window.innerHeight - 30, targetY));
+                
+            } else if (data.type === 'test' || data.type === 'manual_test') {
+                console.log('🧪 Test message received:', data.message);
+                xValue.textContent = 'Test';
+                yValue.textContent = 'Message';
+                zValue.textContent = 'Received';
+                
+            } else if (data.accelX !== undefined) {
+                // Fallback to old hybrid format
+                console.log('🔄 Legacy hybrid data');
+                xValue.textContent = `A:${data.accelX.toFixed(2)} G:${data.gyroX.toFixed(2)}`;
+                yValue.textContent = `A:${data.accelY.toFixed(2)} G:${data.gyroY.toFixed(2)}`;
+                zValue.textContent = 'Legacy Mode';
+                
+                const accelSensitivity = 35;
+                const gyroSensitivity = 8;
+                const accelDeadzone = 0.1;
+                const gyroDeadzone = 0.15;
+                
+                let deltaX = 0;
+                let deltaY = 0;
+                
+                if (Math.abs(data.accelX) > accelDeadzone) {
+                    deltaX += data.accelX * accelSensitivity;
+                }
+                if (Math.abs(data.accelY) > accelDeadzone) {
+                    deltaY -= data.accelY * accelSensitivity;
+                }
+                
+                if (Math.abs(data.gyroY) > gyroDeadzone) {
+                    deltaX -= data.gyroY * gyroSensitivity * 0.3;
+                }
+                if (Math.abs(data.gyroX) > gyroDeadzone) {
+                    deltaY -= data.gyroX * gyroSensitivity * 0.3;
+                }
+                
+                targetX += deltaX;
+                targetY += deltaY;
+                
+            } else {
+                // Fallback to oldest format
+                console.log('🔄 Legacy simple data');
+                xValue.textContent = data.x.toFixed(3);
+                yValue.textContent = data.y.toFixed(3);
+                zValue.textContent = data.z.toFixed(3);
+                
+                const deadzone = 0.08;
+                const sensitivity = 25;
+                
+                let deltaX = 0;
+                let deltaY = 0;
+                
+                if (Math.abs(data.y) > deadzone) {
+                    deltaX = -data.y * sensitivity;
+                }
+                if (Math.abs(data.x) > deadzone) {
+                    deltaY = -data.x * sensitivity;
+                }
+                
+                targetX += deltaX;
+                targetY += deltaY;
+            }
+            
+            // Keep target within bounds
+            targetX = Math.max(0, Math.min(window.innerWidth - 30, targetX));
+            targetY = Math.max(0, Math.min(window.innerHeight - 30, targetY));
+        }
+        
+        function startSmoothAnimation() {
+            function animate() {
+                // Smooth interpolation for natural movement
+                const smoothingFactor = 0.12; // Good balance of smoothness and responsiveness
+                
+                // Calculate distance to target
+                const distanceX = targetX - cursorX;
+                const distanceY = targetY - cursorY;
+                
+                // Apply smooth interpolation
+                cursorX += distanceX * smoothingFactor;
+                cursorY += distanceY * smoothingFactor;
+                
+                // Update cursor position
+                updateCursorPosition();
+                
+                // Create trail for smooth visual feedback
+                if (Math.abs(distanceX) > 0.5 || Math.abs(distanceY) > 0.5) {
+                    createTrail();
+                }
+                
+                // Continue animation
+                requestAnimationFrame(animate);
+            }
+            
+            animate();
+        }
+        
+        function updateCursorPosition() {
+            cursor.style.left = cursorX + 'px';
+            cursor.style.top = cursorY + 'px';
+            position.textContent = `${Math.round(cursorX)}, ${Math.round(cursorY)}`;
+        }
+        
+        function resetCursor() {
+            targetX = window.innerWidth / 2;
+            targetY = window.innerHeight / 2;
+            cursorX = targetX;
+            cursorY = targetY;
+            updateCursorPosition();
+            console.log('Cursor reset to center');
+        }
+        
+        function createTrail() {
+            const trail = document.createElement('div');
+            trail.className = 'trail';
+            trail.style.left = (cursorX + 13) + 'px'; // Center of cursor
+            trail.style.top = (cursorY + 13) + 'px';
+            document.body.appendChild(trail);
+            
+            // Remove trail element after animation
+            setTimeout(() => {
+                if (trail.parentNode) {
+                    trail.parentNode.removeChild(trail);
+                }
+            }, 2000);
+        }
+        
+        function updateStatus(message, connected) {
+            const statusSpan = status.querySelector('span');
+            statusSpan.textContent = message;
+            statusSpan.className = connected ? 'connected' : 'disconnected';
+        }
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            cursorX = Math.max(0, Math.min(window.innerWidth - 30, cursorX));
+            cursorY = Math.max(0, Math.min(window.innerHeight - 30, cursorY));
+            updateCursorPosition();
+        });
+        
+        // Auto-connect on page load (optional)
+        // connect();
+    </script>
+</body>
+</html>
